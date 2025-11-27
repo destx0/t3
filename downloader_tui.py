@@ -67,13 +67,14 @@ def select_exam():
     return selected
 
 
-def fetch_all_tests():
+def fetch_all_tests(start_year=2010, end_year=2025):
     """Fetch all tests for current exam from API"""
     target_id = EXAM_TARGETS[current_exam]["id"]
     all_tests = []
     year_counts = Counter()
+    years = list(range(start_year, end_year + 1))
 
-    console.print(f"Fetching tests for {current_exam}...")
+    console.print(f"Fetching tests for {current_exam} ({start_year}-{end_year})...")
     console.print()
 
     with Progress(
@@ -83,9 +84,9 @@ def fetch_all_tests():
         TaskProgressColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("Fetching years...", total=11)
+        task = progress.add_task("Fetching years...", total=len(years))
 
-        for year in range(2010, 2026):
+        for year in years:
             progress.update(task, description=f"Fetching {year}...")
 
             url = f"https://api.testbook.com/api/v1/previous-year-papers/target/{target_id}?id={target_id}&skip=0&limit=2000&year={year}&stage=&type=%5BTarget%20Page%5D%20getPypTargetTests&language=English"
@@ -151,7 +152,7 @@ def download_paper(test_id, progress=None, task=None):
             elif resp.status_code == 429:  # Rate limited
                 delay = base_delay * (2 ** attempt)  # Progressive: 2, 4, 8, 16, 32
                 if progress and task:
-                    progress.update(task, description=f"[yellow]Rate limited, waiting {delay}s...[/yellow]")
+                    progress.update(task, description=f"[red]Rate limit, wait {delay}s[/red]")
                 time.sleep(delay)
             else:
                 return None
@@ -177,7 +178,7 @@ def download_answers(test_id, progress=None, task=None):
             elif resp.status_code == 429:  # Rate limited
                 delay = base_delay * (2 ** attempt)  # Progressive: 2, 4, 8, 16, 32
                 if progress and task:
-                    progress.update(task, description=f"[yellow]Rate limited, waiting {delay}s...[/yellow]")
+                    progress.update(task, description=f"[red]Rate limit, wait {delay}s[/red]")
                 time.sleep(delay)
             else:
                 return None
@@ -254,48 +255,56 @@ def ask_output_options():
 
 def download_and_clean(tests, include_answer):
     """Download papers and clean them, also save raw responses"""
+    from rich.progress import (
+        Progress, SpinnerColumn, BarColumn, TextColumn, 
+        TimeElapsedColumn, TimeRemainingColumn, MofNCompleteColumn
+    )
+    from rich.live import Live
+    from rich.table import Table
+    
     base_dir = get_base_dir()
     output_dir = base_dir / "cleaned"
     raw_dir = base_dir / "raw"
     success = 0
     failed = 0
+    total = len(tests)
+    current_status = "Starting..."
 
-    from rich.progress import MofNCompleteColumn
-    
     with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
+        SpinnerColumn("dots"),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40, complete_style="green", finished_style="bright_green"),
         MofNCompleteColumn(),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
         console=console,
+        expand=False,
     ) as progress:
-        # Two tasks: one for title, one for progress bar
-        title_task = progress.add_task("", total=None)
-        bar_task = progress.add_task("", total=len(tests))
+        task = progress.add_task("Downloading", total=total)
 
-        for test in tests:
+        for idx, test in enumerate(tests, 1):
             tid = test["id"]
             title = test.get("title", "Unknown")
             year = test["year"]
 
-            short_title = title[:60] + "..." if len(title) > 60 else title
-            progress.update(title_task, description=f"[cyan]{short_title}[/cyan]")
+            progress.update(task, description=f"[cyan]Paper {idx}[/cyan]")
 
-            paper = download_paper(tid, progress, title_task)
+            paper = download_paper(tid, progress=progress, task=task)
             if not paper:
                 failed += 1
-                progress.advance(bar_task)
+                progress.advance(task)
                 continue
 
-            progress.update(title_task, description=f"[cyan]{short_title}[/cyan] [dim](answers)[/dim]")
-            answers = download_answers(tid, progress, title_task)
+            progress.update(task, description=f"[yellow]Answers {idx}[/yellow]")
+            answers = download_answers(tid, progress=progress, task=task)
 
             try:
-                # Create safe filename
                 safe_title = "".join(
                     c for c in title if c.isalnum() or c in (" ", "-", "_")
                 )[:80]
                 
-                # Save raw responses
                 raw_year_dir = raw_dir / str(year)
                 raw_year_dir.mkdir(parents=True, exist_ok=True)
                 
@@ -306,7 +315,6 @@ def download_and_clean(tests, include_answer):
                     with open(raw_year_dir / f"{tid}_{safe_title}_answers.json", "w", encoding="utf-8") as f:
                         json.dump(answers, f, indent=2, ensure_ascii=False)
 
-                # Save cleaned version
                 cleaned = process_paper(paper, answers, include_answer)
 
                 year_dir = output_dir / str(year)
@@ -321,7 +329,7 @@ def download_and_clean(tests, include_answer):
             except Exception:
                 failed += 1
 
-            progress.advance(bar_task)
+            progress.advance(task)
             time.sleep(0.3)
 
     return success, failed
