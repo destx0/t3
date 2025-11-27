@@ -136,16 +136,56 @@ def load_tests():
     return None
 
 
-def download_paper(test_id):
+def download_paper(test_id, progress=None, task=None):
+    """Download paper with retry logic"""
     url = f"https://api-new.testbook.com/api/v2/tests/{test_id}?auth_code={AUTH_CODE}&X-Tb-Client=web,1.2&language=English&attemptNo=1"
-    resp = requests.get(url)
-    return resp.json() if resp.status_code == 200 else None
+    
+    max_retries = 5
+    base_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url)
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 429:  # Rate limited
+                delay = base_delay * (2 ** attempt)  # Progressive: 2, 4, 8, 16, 32
+                if progress and task:
+                    progress.update(task, description=f"[yellow]Rate limited, waiting {delay}s...[/yellow]")
+                time.sleep(delay)
+            else:
+                return None
+        except Exception:
+            delay = base_delay * (2 ** attempt)
+            time.sleep(delay)
+    
+    return None
 
 
-def download_answers(test_id):
+def download_answers(test_id, progress=None, task=None):
+    """Download answers with retry logic and progressive delay"""
     url = f"https://api-new.testbook.com/api/v2/tests/{test_id}/answers?auth_code={AUTH_CODE}&X-Tb-Client=web,1.2&language=English&attemptNo=1"
-    resp = requests.get(url)
-    return resp.json() if resp.status_code == 200 else None
+    
+    max_retries = 5
+    base_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url)
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 429:  # Rate limited
+                delay = base_delay * (2 ** attempt)  # Progressive: 2, 4, 8, 16, 32
+                if progress and task:
+                    progress.update(task, description=f"[yellow]Rate limited, waiting {delay}s...[/yellow]")
+                time.sleep(delay)
+            else:
+                return None
+        except Exception:
+            delay = base_delay * (2 ** attempt)
+            time.sleep(delay)
+    
+    return None
 
 
 def process_paper(paper_data, answers_data, include_correct_answer):
@@ -213,46 +253,65 @@ def ask_output_options():
 
 
 def download_and_clean(tests, include_answer):
-    """Download papers and clean them"""
+    """Download papers and clean them, also save raw responses"""
     base_dir = get_base_dir()
     output_dir = base_dir / "cleaned"
+    raw_dir = base_dir / "raw"
     success = 0
     failed = 0
 
+    from rich.progress import MofNCompleteColumn
+    
     with Progress(
-        SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        TaskProgressColumn(),
+        MofNCompleteColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("Downloading...", total=len(tests))
+        # Two tasks: one for title, one for progress bar
+        title_task = progress.add_task("", total=None)
+        bar_task = progress.add_task("", total=len(tests))
 
         for test in tests:
             tid = test["id"]
             title = test.get("title", "Unknown")
             year = test["year"]
 
-            short_title = title[:40] + "..." if len(title) > 40 else title
-            progress.update(task, description=f"{short_title}")
+            short_title = title[:60] + "..." if len(title) > 60 else title
+            progress.update(title_task, description=f"[cyan]{short_title}[/cyan]")
 
-            paper = download_paper(tid)
+            paper = download_paper(tid, progress, title_task)
             if not paper:
                 failed += 1
-                progress.advance(task)
+                progress.advance(bar_task)
                 continue
 
-            answers = download_answers(tid)
+            progress.update(title_task, description=f"[cyan]{short_title}[/cyan] [dim](answers)[/dim]")
+            answers = download_answers(tid, progress, title_task)
 
             try:
+                # Create safe filename
+                safe_title = "".join(
+                    c for c in title if c.isalnum() or c in (" ", "-", "_")
+                )[:80]
+                
+                # Save raw responses
+                raw_year_dir = raw_dir / str(year)
+                raw_year_dir.mkdir(parents=True, exist_ok=True)
+                
+                with open(raw_year_dir / f"{tid}_{safe_title}_paper.json", "w", encoding="utf-8") as f:
+                    json.dump(paper, f, indent=2, ensure_ascii=False)
+                
+                if answers:
+                    with open(raw_year_dir / f"{tid}_{safe_title}_answers.json", "w", encoding="utf-8") as f:
+                        json.dump(answers, f, indent=2, ensure_ascii=False)
+
+                # Save cleaned version
                 cleaned = process_paper(paper, answers, include_answer)
 
                 year_dir = output_dir / str(year)
                 year_dir.mkdir(parents=True, exist_ok=True)
 
-                safe_title = "".join(
-                    c for c in title if c.isalnum() or c in (" ", "-", "_")
-                )[:80]
                 filename = f"{tid}_{safe_title}.json"
 
                 with open(year_dir / filename, "w", encoding="utf-8") as f:
@@ -262,7 +321,7 @@ def download_and_clean(tests, include_answer):
             except Exception:
                 failed += 1
 
-            progress.advance(task)
+            progress.advance(bar_task)
             time.sleep(0.3)
 
     return success, failed
@@ -338,7 +397,8 @@ def main():
             console.print(
                 Panel(
                     f"[green]Success: {success}[/green]  [red]Failed: {failed}[/red]\n"
-                    f"[dim]Output: {get_base_dir() / 'cleaned'}[/dim]",
+                    f"[dim]Cleaned: {get_base_dir() / 'cleaned'}[/dim]\n"
+                    f"[dim]Raw: {get_base_dir() / 'raw'}[/dim]",
                     title="Results",
                 )
             )
