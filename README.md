@@ -4,22 +4,8 @@ Download previous year question papers from Testbook with a simple TUI.
 
 ## Installation
 
-**Option 1: pipx (recommended)**
+**Option 1: Run directly**
 ```bash
-pipx install git+https://github.com/YOUR_USERNAME/testbook-pyq-downloader.git
-pyq
-```
-
-**Option 2: pip**
-```bash
-pip install git+https://github.com/YOUR_USERNAME/testbook-pyq-downloader.git
-pyq
-```
-
-**Option 3: Run directly**
-```bash
-git clone https://github.com/YOUR_USERNAME/testbook-pyq-downloader.git
-cd testbook-pyq-downloader
 pip install -r requirements.txt
 python downloader_tui.py
 ```
