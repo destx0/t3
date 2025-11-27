@@ -41,7 +41,7 @@ def get_tests_file():
 
 def show_header():
     console.clear()
-    title = "Testbook PYQ Downloader"
+    title = "PYQ Downloader"
     if current_exam:
         title += f" | {current_exam}"
     console.print(Panel.fit(f"[bold cyan]{title}[/bold cyan]", border_style="cyan"))
