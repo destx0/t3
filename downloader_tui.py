@@ -85,7 +85,7 @@ def fetch_all_tests():
     ) as progress:
         task = progress.add_task("Fetching years...", total=11)
 
-        for year in range(2015, 2026):
+        for year in range(2010, 2026):
             progress.update(task, description=f"Fetching {year}...")
 
             url = f"https://api.testbook.com/api/v1/previous-year-papers/target/{target_id}?id={target_id}&skip=0&limit=2000&year={year}&stage=&type=%5BTarget%20Page%5D%20getPypTargetTests&language=English"
